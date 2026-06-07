@@ -1,35 +1,49 @@
 """
-KernelGraph CLI
+KernelGraph CLI v2.0
 
-命令行接口，提供以下命令：
+支持多开发模式的命令行接口：
 - parse: 解析kernel源码
 - visualize: 可视化图结构
+- analyze: 性能分析
+- generate: 生成代码
 - prompt: 生成LLM prompt
+- serve: 启动API服务
+- ui: 启动Web UI
 """
 
 import click
 import json
 from pathlib import Path
 
-from ..parser.cuda_parser import CudaParser
-from ..graph.graph_builder import GraphBuilder
+from ..modes import get_mode, list_modes
+from ..visualizer import GraphVisualizer, VisualizationFormat
+from ..analysis.analyzer import PerformanceAnalyzer
+from ..generator.code_generator import CodeGeneratorFactory
 
 
 @click.group()
-@click.version_option(version="0.1.0")
+@click.version_option(version="0.2.0")
 def cli():
-    """KernelGraph - CUDA Kernel 计算图可视化工具"""
+    """KernelGraph - CUDA Kernel 计算图可视化工具 (支持多开发模式)"""
     pass
 
 
 @cli.command()
-@click.option('--input', '-i', required=True, help='输入的CUDA kernel文件路径')
+def modes():
+    """列出支持的开发模式"""
+    click.echo("支持的开发模式:")
+    for mode in list_modes():
+        click.echo(f"  - {mode}")
+
+
+@cli.command()
+@click.option('--input', '-i', required=True, help='输入的kernel文件路径')
 @click.option('--output', '-o', default=None, help='输出文件路径')
+@click.option('--mode', '-m', default='cuda', help='开发模式 (cuda/cute)')
 @click.option('--format', '-f', type=click.Choice(['json', 'text']), default='json', help='输出格式')
-def parse(input, output, format):
-    """解析CUDA kernel源码"""
+def parse(input, output, mode, format):
+    """解析kernel源码"""
     try:
-        # 读取输入文件
         input_path = Path(input)
         if not input_path.exists():
             click.echo(f"错误: 文件不存在 - {input}", err=True)
@@ -37,17 +51,18 @@ def parse(input, output, format):
         
         source_code = input_path.read_text(encoding='utf-8')
         
-        # 解析
-        parser = CudaParser()
-        parsed_kernel = parser.parse(source_code)
+        # 获取模式
+        mode_instance = get_mode(mode)
+        parsed = mode_instance.parse(source_code)
         
         # 输出结果
-        result = parsed_kernel.to_dict()
-        
         if format == 'json':
-            output_content = json.dumps(result, indent=2, ensure_ascii=False)
+            if hasattr(parsed, 'to_dict'):
+                output_content = json.dumps(parsed.to_dict(), indent=2, ensure_ascii=False)
+            else:
+                output_content = json.dumps(parsed.__dict__, indent=2, ensure_ascii=False, default=str)
         else:
-            output_content = _format_as_text(result)
+            output_content = str(parsed)
         
         if output:
             Path(output).write_text(output_content, encoding='utf-8')
@@ -60,13 +75,14 @@ def parse(input, output, format):
 
 
 @cli.command()
-@click.option('--input', '-i', required=True, help='输入的CUDA kernel文件路径')
+@click.option('--input', '-i', required=True, help='输入的kernel文件路径')
 @click.option('--output', '-o', default=None, help='输出文件路径')
-@click.option('--format', '-f', type=click.Choice(['json', 'text']), default='json', help='输出格式')
-def visualize(input, output, format):
+@click.option('--mode', '-m', default='cuda', help='开发模式 (cuda/cute)')
+@click.option('--format', '-f', type=click.Choice(['text', 'json', 'mermaid', 'dot', 'svg']), 
+              default='mermaid', help='可视化格式')
+def visualize(input, output, mode, format):
     """生成计算图可视化"""
     try:
-        # 读取输入文件
         input_path = Path(input)
         if not input_path.exists():
             click.echo(f"错误: 文件不存在 - {input}", err=True)
@@ -74,19 +90,23 @@ def visualize(input, output, format):
         
         source_code = input_path.read_text(encoding='utf-8')
         
-        # 解析
-        parser = CudaParser()
-        parsed_kernel = parser.parse(source_code)
+        # 获取模式
+        mode_instance = get_mode(mode)
+        parsed = mode_instance.parse(source_code)
+        graph = mode_instance.build_graph(parsed)
         
-        # 构建图
-        builder = GraphBuilder()
-        graph = builder.build(parsed_kernel)
+        # 可视化
+        format_map = {
+            'text': VisualizationFormat.TEXT,
+            'json': VisualizationFormat.JSON,
+            'mermaid': VisualizationFormat.MERMAID,
+            'dot': VisualizationFormat.DOT,
+            'svg': VisualizationFormat.SVG
+        }
+        viz_format = format_map.get(format, VisualizationFormat.MERMAID)
         
-        # 输出结果
-        if format == 'json':
-            output_content = graph.to_json()
-        else:
-            output_content = builder.visualize_text()
+        visualizer = GraphVisualizer()
+        output_content = visualizer.visualize(graph, viz_format)
         
         if output:
             Path(output).write_text(output_content, encoding='utf-8')
@@ -99,13 +119,13 @@ def visualize(input, output, format):
 
 
 @cli.command()
-@click.option('--input', '-i', required=True, help='输入的CUDA kernel文件路径')
+@click.option('--input', '-i', required=True, help='输入的kernel文件路径')
 @click.option('--output', '-o', default=None, help='输出文件路径')
-@click.option('--style', '-s', type=click.Choice(['brief', 'detailed']), default='detailed', help='prompt风格')
-def prompt(input, output, style):
-    """生成LLM prompt"""
+@click.option('--mode', '-m', default='cuda', help='开发模式 (cuda/cute)')
+@click.option('--format', '-f', type=click.Choice(['text', 'json']), default='text', help='报告格式')
+def analyze(input, output, mode, format):
+    """性能分析"""
     try:
-        # 读取输入文件
         input_path = Path(input)
         if not input_path.exists():
             click.echo(f"错误: 文件不存在 - {input}", err=True)
@@ -113,16 +133,93 @@ def prompt(input, output, style):
         
         source_code = input_path.read_text(encoding='utf-8')
         
-        # 解析
-        parser = CudaParser()
-        parsed_kernel = parser.parse(source_code)
+        # 获取模式
+        mode_instance = get_mode(mode)
+        parsed = mode_instance.parse(source_code)
+        graph = mode_instance.build_graph(parsed)
         
-        # 构建图
-        builder = GraphBuilder()
-        graph = builder.build(parsed_kernel)
+        # 分析
+        analyzer = PerformanceAnalyzer()
+        result = analyzer.analyze(graph)
+        
+        # 输出
+        if format == 'json':
+            output_content = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
+        else:
+            output_content = analyzer.generate_report(result, format='text')
+        
+        if output:
+            Path(output).write_text(output_content, encoding='utf-8')
+            click.echo(f"分析完成，输出到: {output}")
+        else:
+            click.echo(output_content)
+    
+    except Exception as e:
+        click.echo(f"错误: {str(e)}", err=True)
+
+
+@cli.command()
+@click.option('--input', '-i', required=True, help='输入的kernel文件路径或图JSON文件')
+@click.option('--output', '-o', default=None, help='输出文件路径')
+@click.option('--mode', '-m', default='cuda', help='开发模式 (cuda/cute)')
+def generate(input, output, mode):
+    """从图生成代码"""
+    try:
+        input_path = Path(input)
+        if not input_path.exists():
+            click.echo(f"错误: 文件不存在 - {input}", err=True)
+            return
+        
+        content = input_path.read_text(encoding='utf-8')
+        
+        # 判断输入类型
+        if input.endswith('.json'):
+            # 从JSON图生成代码
+            from ..graph.data_structures import KernelGraph
+            graph = KernelGraph.from_json(content)
+        else:
+            # 从源码生成
+            mode_instance = get_mode(mode)
+            parsed = mode_instance.parse(content)
+            graph = mode_instance.build_graph(parsed)
+        
+        # 生成代码
+        generator = CodeGeneratorFactory.get_generator(mode)
+        code = generator.generate(graph)
+        
+        if output:
+            Path(output).write_text(code, encoding='utf-8')
+            click.echo(f"代码生成完成，输出到: {output}")
+        else:
+            click.echo(code)
+    
+    except Exception as e:
+        click.echo(f"错误: {str(e)}", err=True)
+
+
+@cli.command()
+@click.option('--input', '-i', required=True, help='输入的kernel文件路径')
+@click.option('--output', '-o', default=None, help='输出文件路径')
+@click.option('--mode', '-m', default='cuda', help='开发模式 (cuda/cute)')
+@click.option('--style', '-s', type=click.Choice(['brief', 'detailed']), default='detailed', help='prompt风格')
+def prompt(input, output, mode, style):
+    """生成LLM prompt"""
+    try:
+        input_path = Path(input)
+        if not input_path.exists():
+            click.echo(f"错误: 文件不存在 - {input}", err=True)
+            return
+        
+        source_code = input_path.read_text(encoding='utf-8')
+        
+        # 获取模式
+        mode_instance = get_mode(mode)
+        parsed = mode_instance.parse(source_code)
+        graph = mode_instance.build_graph(parsed)
         
         # 生成prompt
-        prompt_text = _generate_llm_prompt(graph, parsed_kernel, style)
+        visualizer = GraphVisualizer()
+        prompt_text = visualizer.generate_llm_prompt(graph, style=style)
         
         if output:
             Path(output).write_text(prompt_text, encoding='utf-8')
@@ -134,76 +231,46 @@ def prompt(input, output, style):
         click.echo(f"错误: {str(e)}", err=True)
 
 
-def _format_as_text(data: dict) -> str:
-    """格式化解析结果为文本"""
-    lines = []
-    lines.append(f"Kernel: {data['name']}")
+@cli.command()
+@click.option('--host', default='0.0.0.0', help='服务主机地址')
+@click.option('--port', '-p', default=8000, help='服务端口')
+def serve(host, port):
+    """启动API服务"""
+    click.echo(f"启动API服务: http://{host}:{port}")
     
-    lines.append("\n参数:")
-    for param in data.get('parameters', []):
-        qualifiers = ' '.join(param.get('qualifiers', []))
-        ptr = '*' if param.get('is_pointer') else ''
-        arr = '[]' if param.get('is_array') else ''
-        lines.append(f"  {qualifiers} {param['type']} {ptr}{param['name']}{arr}")
-    
-    lines.append("\n局部变量:")
-    for var in data.get('local_variables', []):
-        lines.append(f"  {var['type']} {var['name']}")
-    
-    lines.append("\n操作:")
-    for op in data.get('operations', []):
-        if op.get('result'):
-            lines.append(f"  {op['result']} = {' '.join(op['operands'])} ({op['operator']})")
-        else:
-            lines.append(f"  {' '.join(op['operands'])} ({op['operator']})")
-    
-    lines.append("\n内存访问:")
-    for mem in data.get('memory_accesses', []):
-        indices = ']['.join(mem.get('indices', []))
-        lines.append(f"  {mem['access_type']} {mem['variable']}[{indices}] ({mem['address_space']})")
-    
-    return '\n'.join(lines)
+    try:
+        from ..api.server import start_server
+        start_server(host=host, port=port)
+    except ImportError:
+        click.echo("错误: API服务依赖未安装，请安装fastapi和uvicorn", err=True)
 
 
-def _generate_llm_prompt(graph, parsed_kernel, style: str) -> str:
-    """生成LLM prompt"""
-    lines = []
+@cli.command()
+@click.option('--port', '-p', default=8080, help='UI服务端口')
+def ui(port):
+    """启动Web UI"""
+    click.echo(f"启动Web UI: http://localhost:{port}")
     
-    lines.append("分析以下CUDA kernel的计算图：\n")
-    lines.append(f"Kernel: {parsed_kernel.name}")
+    import http.server
+    import socketserver
+    import os
     
-    # 参数信息
-    lines.append(f"\n参数:")
-    for param in parsed_kernel.parameters:
-        qualifiers = ' '.join(param.qualifiers)
-        ptr = '*' if param.is_pointer else ''
-        lines.append(f"  {qualifiers} {param.var_type} {ptr}{param.name}")
+    # 获取frontend目录
+    frontend_dir = Path(__file__).parent.parent.parent.parent.parent / 'frontend'
     
-    # 计算图结构
-    lines.append(f"\n计算图结构:")
-    lines.append(f"  节点总数: {len(graph.nodes)}")
-    lines.append(f"  边总数: {len(graph.edges)}")
-    lines.append(f"  操作数: {graph.metadata.total_operations}")
-    lines.append(f"  内存访问数: {graph.metadata.memory_access_count}")
-    lines.append(f"  循环数: {graph.metadata.loop_count}")
-    lines.append(f"  估算FLOPs: {graph.metadata.estimated_flops}")
+    if not frontend_dir.exists():
+        click.echo(f"错误: 前端目录不存在: {frontend_dir}", err=True)
+        return
     
-    if style == 'detailed':
-        lines.append(f"\n节点详情:")
-        for node in graph.nodes:
-            props = ", ".join(f"{k}={v}" for k, v in node.properties.items() if v)
-            lines.append(f"  [{node.label}] {node.type.value} - {props}")
-        
-        lines.append(f"\n依赖关系:")
-        for edge in graph.edges:
-            source = graph.get_node(edge.source)
-            target = graph.get_node(edge.target)
-            if source and target:
-                lines.append(f"  {source.label} → {target.label} ({edge.type.value})")
+    os.chdir(frontend_dir)
     
-    lines.append(f"\n请分析此kernel的性能特点并提供优化建议。")
-    
-    return '\n'.join(lines)
+    with socketserver.TCPServer(("", port), http.server.SimpleHTTPRequestHandler) as httpd:
+        click.echo(f"Web UI 运行在 http://localhost:{port}")
+        click.echo("按 Ctrl+C 停止服务")
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            click.echo("\n服务已停止")
 
 
 # 主入口

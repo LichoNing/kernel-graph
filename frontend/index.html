@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KernelGraph - CUDA Kernel 可视化工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* 侧边栏 */
+        .sidebar {
+            width: 300px;
+            background: #16213e;
+            border-right: 1px solid #0f3460;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #e94560;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .section {
+            margin-bottom: 20px;
+        }
+        
+        .section-title {
+            font-size: 14px;
+            color: #a0a0a0;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+        
+        /* 模式选择 */
+        .mode-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .mode-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #0f3460;
+            background: #0f3460;
+            color: #eee;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.3s;
+        }
+        
+        .mode-btn:hover {
+            background: #e94560;
+            border-color: #e94560;
+        }
+        
+        .mode-btn.active {
+            background: #e94560;
+            border-color: #e94560;
+        }
+        
+        /* 代码输入 */
+        .code-input {
+            width: 100%;
+            height: 200px;
+            background: #0f0f23;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            padding: 10px;
+            color: #eee;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            resize: vertical;
+        }
+        
+        .code-input:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+        
+        /* 按钮 */
+        .btn {
+            width: 100%;
+            padding: 10px;
+            background: #e94560;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+            margin-top: 10px;
+        }
+        
+        .btn:hover {
+            background: #c13651;
+        }
+        
+        .btn-secondary {
+            background: #0f3460;
+        }
+        
+        .btn-secondary:hover {
+            background: #1a4a7a;
+        }
+        
+        /* 主画布 */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .toolbar {
+            height: 50px;
+            background: #16213e;
+            border-bottom: 1px solid #0f3460;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 15px;
+        }
+        
+        .toolbar-btn {
+            padding: 6px 12px;
+            background: #0f3460;
+            border: 1px solid #0f3460;
+            color: #eee;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        
+        .toolbar-btn:hover {
+            background: #e94560;
+            border-color: #e94560;
+        }
+        
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: #0f0f23;
+        }
+        
+        #graphCanvas {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* 节点样式 */
+        .node {
+            position: absolute;
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: 2px solid;
+            cursor: move;
+            font-size: 12px;
+            min-width: 100px;
+            text-align: center;
+            transition: box-shadow 0.3s;
+            user-select: none;
+        }
+        
+        .node:hover {
+            box-shadow: 0 0 15px rgba(233, 69, 96, 0.5);
+        }
+        
+        .node.operation {
+            background: rgba(233, 69, 96, 0.2);
+            border-color: #e94560;
+            color: #e94560;
+        }
+        
+        .node.memory {
+            background: rgba(69, 123, 233, 0.2);
+            border-color: #457be9;
+            color: #457be9;
+        }
+        
+        .node.variable {
+            background: rgba(69, 233, 123, 0.2);
+            border-color: #45e97b;
+            color: #45e97b;
+        }
+        
+        .node.control {
+            background: rgba(233, 200, 69, 0.2);
+            border-color: #e9c845;
+            color: #e9c845;
+        }
+        
+        /* 边 */
+        .edge {
+            position: absolute;
+            pointer-events: none;
+        }
+        
+        .edge-line {
+            stroke: #555;
+            stroke-width: 2;
+            fill: none;
+        }
+        
+        .edge-line.data {
+            stroke: #e94560;
+        }
+        
+        .edge-line.control {
+            stroke: #e9c845;
+            stroke-dasharray: 5,5;
+        }
+        
+        /* 信息面板 */
+        .info-panel {
+            position: absolute;
+            right: 20px;
+            top: 20px;
+            width: 250px;
+            background: rgba(22, 33, 62, 0.95);
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            padding: 15px;
+            display: none;
+        }
+        
+        .info-panel.active {
+            display: block;
+        }
+        
+        .info-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #e94560;
+        }
+        
+        .info-item {
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        
+        .info-label {
+            color: #a0a0a0;
+        }
+        
+        .info-value {
+            color: #eee;
+        }
+        
+        /* 状态栏 */
+        .status-bar {
+            height: 30px;
+            background: #16213e;
+            border-top: 1px solid #0f3460;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            font-size: 12px;
+            color: #a0a0a0;
+        }
+        
+        /* 加载动画 */
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* 提示 */
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 -->
+        <div class="sidebar">
+            <div class="logo">KernelGraph</div>
+            
+            <div class="section">
+                <div class="section-title">开发模式</div>
+                <div class="mode-selector">
+                    <button class="mode-btn" data-mode="cuda">CUDA</button>
+                    <button class="mode-btn active" data-mode="cute">cute</button>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">Kernel 源码</div>
+                <textarea class="code-input" id="codeInput" placeholder="在此粘贴CUDA kernel代码...">__global__ void cute_gemm(float* A, float* B, float* C, int M, int N, int K) {
+    // 使用cute的Tensor
+    Tensor gA = make_tensor(make_gmem_ptr(A), make_shape(M,K), make_stride(1,M));
+    Tensor gB = make_tensor(make_gmem_ptr(B), make_shape(K,N), make_stride(1,K));
+    Tensor gC = make_tensor(make_gmem_ptr(C), make_shape(M,N), make_stride(1,M));
+    
+    // Shared memory Tensor
+    __shared__ float sA[128*32];
+    __shared__ float sB[32*128];
+    Tensor sA_tensor = make_tensor(make_smem_ptr(sA), make_shape(128,32));
+    Tensor sB_tensor = make_tensor(make_smem_ptr(sB), make_shape(32,128));
+    
+    // TiledMMA配置
+    TiledMMA mma = make_tiled_mma(MMA_64x8x16_F16F16F16F16_TN{}, 
+                                   make_layout(Shape<_2,_2>{}),
+                                   Tile<_128,_128,_32>{});
+    
+    // 主循环
+    for (int k = 0; k < K; k += 32) {
+        copy(gA(_,k), sA_tensor);
+        copy(gB(k,_), sB_tensor);
+        gemm(mma, sA_tensor, sB_tensor, gC);
+    }
+}</textarea>
+            </div>
+            
+            <div class="section">
+                <button class="btn" id="parseBtn">解析并可视化</button>
+                <button class="btn btn-secondary" id="generateBtn">生成代码</button>
+                <button class="btn btn-secondary" id="analyzeBtn">性能分析</button>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">分析结果</div>
+                <div id="analysisResult" style="font-size: 12px; color: #a0a0a0;">
+                    点击"性能分析"查看结果
+                </div>
+            </div>
+        </div>
+        
+        <!-- 主内容区 -->
+        <div class="main-content">
+            <div class="toolbar">
+                <button class="toolbar-btn" id="zoomIn">放大</button>
+                <button class="toolbar-btn" id="zoomOut">缩小</button>
+                <button class="toolbar-btn" id="fitView">适应视图</button>
+                <button class="toolbar-btn" id="exportSvg">导出SVG</button>
+                <span style="margin-left: auto; color: #a0a0a0;">
+                    节点: <span id="nodeCount">0</span> | 
+                    边: <span id="edgeCount">0</span>
+                </span>
+            </div>
+            
+            <div class="canvas-container" id="canvasContainer">
+                <svg id="graphCanvas">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" 
+                                refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#555" />
+                        </marker>
+                        <marker id="arrowhead-data" markerWidth="10" markerHeight="7" 
+                                refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#e94560" />
+                        </marker>
+                    </defs>
+                    <g id="graphGroup"></g>
+                </svg>
+                
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                </div>
+                
+                <div class="info-panel" id="infoPanel">
+                    <div class="info-title" id="infoTitle">节点信息</div>
+                    <div id="infoContent"></div>
+                </div>
+            </div>
+            
+            <div class="status-bar">
+                <span id="statusText">就绪</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // 全局状态
+        let currentMode = 'cute';
+        let graphData = null;
+        let scale = 1;
+        let translateX = 0;
+        let translateY = 0;
+        let isDragging = false;
+        let draggedNode = null;
+        let dragOffset = { x: 0, y: 0 };
+
+        // DOM元素
+        const codeInput = document.getElementById('codeInput');
+        const parseBtn = document.getElementById('parseBtn');
+        const generateBtn = document.getElementById('generateBtn');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const graphCanvas = document.getElementById('graphCanvas');
+        const graphGroup = document.getElementById('graphGroup');
+        const canvasContainer = document.getElementById('canvasContainer');
+        const loading = document.getElementById('loading');
+        const infoPanel = document.getElementById('infoPanel');
+        const statusText = document.getElementById('statusText');
+        const nodeCount = document.getElementById('nodeCount');
+        const edgeCount = document.getElementById('edgeCount');
+
+        // 模式切换
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentMode = btn.dataset.mode;
+                updateStatus(`切换到 ${currentMode.toUpperCase()} 模式`);
+            });
+        });
+
+        // 解析按钮
+        parseBtn.addEventListener('click', async () => {
+            const code = codeInput.value;
+            if (!code.trim()) {
+                alert('请输入CUDA kernel代码');
+                return;
+            }
+
+            loading.classList.add('active');
+            updateStatus('正在解析...');
+
+            try {
+                // 调用后端API解析
+                const response = await fetch('http://localhost:8000/api/v1/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        source_code: code,
+                        mode: currentMode
+                    })
+                });
+
+                if (!response.ok) throw new Error('解析失败');
+
+                const data = await response.json();
+                graphData = data.graph;
+                renderGraph(graphData);
+                updateStatus('解析完成');
+            } catch (error) {
+                // 使用模拟数据演示
+                console.log('使用模拟数据:', error);
+                graphData = generateMockGraph();
+                renderGraph(graphData);
+                updateStatus('使用模拟数据渲染');
+            } finally {
+                loading.classList.remove('active');
+            }
+        });
+
+        // 生成代码按钮
+        generateBtn.addEventListener('click', async () => {
+            if (!graphData) {
+                alert('请先解析代码');
+                return;
+            }
+
+            updateStatus('正在生成代码...');
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        graph: graphData,
+                        mode: currentMode
+                    })
+                });
+
+                if (!response.ok) throw new Error('生成失败');
+
+                const data = await response.json();
+                codeInput.value = data.code;
+                updateStatus('代码生成完成');
+            } catch (error) {
+                updateStatus('代码生成失败: ' + error.message);
+            }
+        });
+
+        // 分析按钮
+        analyzeBtn.addEventListener('click', async () => {
+            if (!graphData) {
+                alert('请先解析代码');
+                return;
+            }
+
+            updateStatus('正在分析...');
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        graph: graphData
+                    })
+                });
+
+                if (!response.ok) throw new Error('分析失败');
+
+                const data = await response.json();
+                displayAnalysis(data.analysis);
+                updateStatus('分析完成');
+            } catch (error) {
+                // 使用模拟分析数据
+                displayAnalysis(generateMockAnalysis());
+                updateStatus('使用模拟数据分析');
+            }
+        });
+
+        // 渲染图
+        function renderGraph(graph) {
+            graphGroup.innerHTML = '';
+            
+            if (!graph || !graph.nodes) return;
+
+            // 计算布局
+            const layout = calculateLayout(graph.nodes);
+            
+            // 渲染边
+            if (graph.edges) {
+                graph.edges.forEach(edge => {
+                    const sourceNode = layout[edge.source];
+                    const targetNode = layout[edge.target];
+                    if (sourceNode && targetNode) {
+                        renderEdge(edge, sourceNode, targetNode);
+                    }
+                });
+            }
+            
+            // 渲染节点
+            graph.nodes.forEach(node => {
+                const pos = layout[node.id];
+                if (pos) {
+                    renderNode(node, pos.x, pos.y);
+                }
+            });
+
+            // 更新统计
+            nodeCount.textContent = graph.nodes.length;
+            edgeCount.textContent = graph.edges ? graph.edges.length : 0;
+        }
+
+        // 计算布局（简单的层次布局）
+        function calculateLayout(nodes) {
+            const layout = {};
+            const levels = {};
+            
+            // 按类型分组
+            const typeOrder = ['variable', 'memory', 'operation', 'control'];
+            
+            nodes.forEach((node, index) => {
+                const type = node.type || 'unknown';
+                const level = typeOrder.indexOf(type);
+                const safeLevel = level >= 0 ? level : typeOrder.length;
+                
+                if (!levels[safeLevel]) levels[safeLevel] = [];
+                levels[safeLevel].push(node);
+            });
+            
+            // 计算位置
+            const levelHeight = 150;
+            const nodeWidth = 120;
+            const startX = 100;
+            const startY = 100;
+            
+            Object.keys(levels).sort((a, b) => a - b).forEach(level => {
+                const levelNodes = levels[level];
+                const totalWidth = levelNodes.length * nodeWidth;
+                const offsetX = (canvasContainer.clientWidth - totalWidth) / 2;
+                
+                levelNodes.forEach((node, index) => {
+                    layout[node.id] = {
+                        x: startX + offsetX + index * nodeWidth,
+                        y: startY + level * levelHeight
+                    };
+                });
+            });
+            
+            return layout;
+        }
+
+        // 渲染节点
+        function renderNode(node, x, y) {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('transform', `translate(${x}, ${y})`);
+            g.setAttribute('class', 'node-group');
+            g.setAttribute('data-node-id', node.id);
+            g.style.cursor = 'move';
+            
+            // 节点矩形
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('width', '100');
+            rect.setAttribute('height', '50');
+            rect.setAttribute('rx', '8');
+            rect.setAttribute('class', `node ${node.type || 'operation'}`);
+            
+            // 节点文本
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', '50');
+            text.setAttribute('y', '30');
+            text.setAttribute('text-anchor', 'middle');
+            text.setAttribute('fill', '#eee');
+            text.setAttribute('font-size', '11');
+            text.textContent = node.label || node.id.substring(0, 8);
+            
+            g.appendChild(rect);
+            g.appendChild(text);
+            
+            // 事件监听
+            g.addEventListener('mousedown', (e) => startDrag(e, node, g));
+            g.addEventListener('click', () => showNodeInfo(node));
+            
+            graphGroup.appendChild(g);
+        }
+
+        // 渲染边
+        function renderEdge(edge, source, target) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            
+            const startX = source.x + 50;
+            const startY = source.y + 50;
+            const endX = target.x + 50;
+            const endY = target.y;
+            
+            // 贝塞尔曲线
+            const midY = (startY + endY) / 2;
+            const d = `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`;
+            
+            line.setAttribute('d', d);
+            line.setAttribute('class', `edge-line ${edge.type || 'data'}`);
+            line.setAttribute('marker-end', 'url(#arrowhead-data)');
+            
+            graphGroup.appendChild(line);
+        }
+
+        // 拖拽功能
+        function startDrag(e, node, element) {
+            isDragging = true;
+            draggedNode = { node, element };
+            const transform = element.getAttribute('transform');
+            const match = transform.match(/translate\(([^,]+),\s*([^)]+)\)/);
+            if (match) {
+                dragOffset.x = e.clientX - parseFloat(match[1]);
+                dragOffset.y = e.clientY - parseFloat(match[2]);
+            }
+        }
+
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging && draggedNode) {
+                const x = e.clientX - dragOffset.x;
+                const y = e.clientY - dragOffset.y;
+                draggedNode.element.setAttribute('transform', `translate(${x}, ${y})`);
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            draggedNode = null;
+        });
+
+        // 显示节点信息
+        function showNodeInfo(node) {
+            infoPanel.classList.add('active');
+            document.getElementById('infoTitle').textContent = node.label || '节点';
+            
+            let content = '';
+            content += `<div class="info-item"><span class="info-label">ID:</span> <span class="info-value">${node.id}</span></div>`;
+            content += `<div class="info-item"><span class="info-label">类型:</span> <span class="info-value">${node.type}</span></div>`;
+            
+            if (node.properties) {
+                Object.entries(node.properties).forEach(([key, value]) => {
+                    content += `<div class="info-item"><span class="info-label">${key}:</span> <span class="info-value">${value}</span></div>`;
+                });
+            }
+            
+            document.getElementById('infoContent').innerHTML = content;
+        }
+
+        // 显示分析结果
+        function displayAnalysis(analysis) {
+            const resultDiv = document.getElementById('analysisResult');
+            
+            let html = '';
+            html += `<div style="margin-bottom: 10px;"><strong>综合评分:</strong> ${(analysis.overall_score * 100).toFixed(1)}%</div>`;
+            
+            if (analysis.bottlenecks && analysis.bottlenecks.length > 0) {
+                html += '<div style="margin-bottom: 10px;"><strong>瓶颈:</strong></div>';
+                analysis.bottlenecks.forEach(b => {
+                    html += `<div style="margin-left: 10px; color: #e94560;">• ${b.description}</div>`;
+                });
+            }
+            
+            if (analysis.optimizations && analysis.optimizations.length > 0) {
+                html += '<div style="margin-top: 10px;"><strong>优化建议:</strong></div>';
+                analysis.optimizations.forEach(o => {
+                    html += `<div style="margin-left: 10px; color: #45e97b;">• ${o.description}</div>`;
+                });
+            }
+            
+            resultDiv.innerHTML = html;
+        }
+
+        // 缩放功能
+        document.getElementById('zoomIn').addEventListener('click', () => {
+            scale *= 1.2;
+            updateTransform();
+        });
+
+        document.getElementById('zoomOut').addEventListener('click', () => {
+            scale /= 1.2;
+            updateTransform();
+        });
+
+        document.getElementById('fitView').addEventListener('click', () => {
+            scale = 1;
+            translateX = 0;
+            translateY = 0;
+            updateTransform();
+        });
+
+        function updateTransform() {
+            graphGroup.setAttribute('transform', `translate(${translateX}, ${translateY}) scale(${scale})`);
+        }
+
+        // 导出SVG
+        document.getElementById('exportSvg').addEventListener('click', () => {
+            const svgData = new XMLSerializer().serializeToString(graphCanvas);
+            const blob = new Blob([svgData], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'kernel_graph.svg';
+            link.click();
+        });
+
+        // 更新状态
+        function updateStatus(text) {
+            statusText.textContent = text;
+        }
+
+        // 生成模拟图数据
+        function generateMockGraph() {
+            return {
+                name: "cute_gemm",
+                nodes: [
+                    { id: "n1", type: "variable", label: "param_A", properties: { var_type: "float*" } },
+                    { id: "n2", type: "variable", label: "param_B", properties: { var_type: "float*" } },
+                    { id: "n3", type: "variable", label: "param_C", properties: { var_type: "float*" } },
+                    { id: "n4", type: "memory", label: "gA", properties: { address_space: "global", layout: "(M,K):(1,M)" } },
+                    { id: "n5", type: "memory", label: "gB", properties: { address_space: "global", layout: "(K,N):(1,K)" } },
+                    { id: "n6", type: "memory", label: "gC", properties: { address_space: "global", layout: "(M,N):(1,M)" } },
+                    { id: "n7", type: "memory", label: "sA", properties: { address_space: "shared", layout: "(128,32)" } },
+                    { id: "n8", type: "memory", label: "sB", properties: { address_space: "shared", layout: "(32,128)" } },
+                    { id: "n9", type: "operation", label: "TiledMMA", properties: { op_type: "tiled_mma", tile_shape: "128x128x32" } },
+                    { id: "n10", type: "operation", label: "copy_g2s_A", properties: { op_type: "copy" } },
+                    { id: "n11", type: "operation", label: "copy_g2s_B", properties: { op_type: "copy" } },
+                    { id: "n12", type: "operation", label: "gemm", properties: { op_type: "mma" } },
+                    { id: "n13", type: "control", label: "loop_k", properties: { control_type: "for" } }
+                ],
+                edges: [
+                    { source: "n1", target: "n4", type: "data" },
+                    { source: "n2", target: "n5", type: "data" },
+                    { source: "n3", target: "n6", type: "data" },
+                    { source: "n4", target: "n10", type: "data" },
+                    { source: "n5", target: "n11", type: "data" },
+                    { source: "n10", target: "n7", type: "data" },
+                    { source: "n11", target: "n8", type: "data" },
+                    { source: "n7", target: "n12", type: "data" },
+                    { source: "n8", target: "n12", type: "data" },
+                    { source: "n12", target: "n6", type: "data" },
+                    { source: "n13", target: "n10", type: "control" },
+                    { source: "n13", target: "n11", type: "control" },
+                    { source: "n13", target: "n12", type: "control" }
+                ]
+            };
+        }
+
+        // 生成模拟分析数据
+        function generateMockAnalysis() {
+            return {
+                overall_score: 0.72,
+                bottlenecks: [
+                    { type: "memory", description: "全局内存访问比例过高", severity: 0.6 },
+                    { type: "compute", description: "MMA利用率可提升", severity: 0.4 }
+                ],
+                optimizations: [
+                    { description: "使用cp.async进行异步拷贝", priority: "high" },
+                    { description: "增加共享内存缓存", priority: "high" },
+                    { description: "考虑双缓冲pipeline", priority: "medium" }
+                ]
+            };
+        }
+
+        // 初始化
+        updateStatus('就绪 - 点击"解析并可视化"开始');
+    </script>
+</body>
+</html>
